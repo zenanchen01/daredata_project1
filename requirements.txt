@@ -1,0 +1,11 @@
+pandas
+scikit-learn
+joblib
+sqlalchemy
+psycopg2-binary
+fastapi
+uvicorn[standard]
+streamlit
+requests
+pytest
+boto3

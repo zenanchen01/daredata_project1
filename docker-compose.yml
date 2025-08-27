@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    env_file: [ .env]
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: ml_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      dockerfile: src/api/Dockerfile
+    env_file: [ .env]
+    environment:
+      DATABASE_URL: postgresql://user:pass@db:5432/ml_db
+      MODEL_PATH: /app/artifacts/model.joblib
+      PYTHONPATH: /app
+    depends_on:
+      - db
+    ports:
+      - "8000:8000"        # host:container (use 8001 to avoid clashes)
+    volumes:
+      - ./src:/app         # your code lives at /app inside the container
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+      - ~/.aws:/root/.aws:ro
+
+  web:
+    build:
+      context: .
+      dockerfile: src/web/Dockerfile
+    env_file: [ .env]
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:8000       # container-to-container URL
+    ports:
+      - "8501:8501"                  # host:container
+    volumes:
+      - ./src:/app
+
+volumes:
+  dbdata:

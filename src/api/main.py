@@ -1,15 +1,17 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-import joblib, os
-import pandas as pd
+import os, io, joblib, pandas as pd
+import boto3
+from botocore.exceptions import ClientError, BotoCoreError
 
-app = FastAPI(title="Bank Marketing API")
+app = FastAPI(title="Bank Marketing API (S3 in-memory)")
 
-ART = None
+# Globals (in-memory cache)
+ART = MODEL = None
 FEATURES = None
-MODEL = None
 
-# Expected input structure (subset is fine; missing keys become None)
+NUMERIC_COLS = {"age", "balance", "day", "campaign", "pdays", "previous"}
+
 class BankPayload(BaseModel):
     age: int | None = Field(default=None)
     job: str | None = None
@@ -27,24 +29,23 @@ class BankPayload(BaseModel):
     previous: int | None = None
     poutcome: str | None = None
 
-@app.on_event("startup")
-def _load_model():
-    global ART, MODEL, FEATURES
-    path = os.getenv("MODEL_PATH", "artifacts/model.joblib")
-    ART = joblib.load(path)
-    MODEL = ART["model"]
-    FEATURES = ART["features"]
-
-@app.get("/health")
-def health():
-    ok = MODEL is not None and FEATURES is not None
-    return {"status": "ok" if ok else "not_ready"}
-
-# adjust if you have other numeric columns
-NUMERIC_COLS = {"age", "balance", "day", "campaign", "pdays", "previous"}
+def _load_artifact_from_s3_into_memory():
+    """Fetch joblib artifact from S3 and load into memory (no local file)."""
+    bucket = os.environ["S3_BUCKET"]
+    key    = os.environ["S3_MODEL_KEY"]
+    region = os.getenv("AWS_DEFAULT_REGION", "eu-west-1")
+    s3 = boto3.client("s3", region_name=region)
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        buf = io.BytesIO(obj["Body"].read())
+        art = joblib.load(buf)
+        return art
+    except (ClientError, BotoCoreError) as e:
+        raise RuntimeError(f"S3 get_object failed for s3://{bucket}/{key}: {e}")
+    except Exception as e:
+        raise RuntimeError(f"joblib.load failed: {e}")
 
 def _coerce_row_to_features(row_in: dict) -> pd.DataFrame:
-    """Return a 1-row DataFrame with columns=FEATURES and proper dtypes."""
     if FEATURES is None:
         raise HTTPException(status_code=503, detail="Model not loaded.")
     row = {}
@@ -58,20 +59,51 @@ def _coerce_row_to_features(row_in: dict) -> pd.DataFrame:
             except Exception:
                 raise HTTPException(status_code=422, detail=f"Field '{f}' must be numeric, got {row_in.get(f)!r}")
         else:
-            v = "unknown" if v is None else str(v)
+            v = "unknown" if v is None else str(v).strip().lower()
         row[f] = v
     return pd.DataFrame([row], columns=FEATURES)
+
+@app.on_event("startup")
+def _startup():
+    global ART, MODEL, FEATURES
+    try:
+        ART = _load_artifact_from_s3_into_memory()
+        MODEL = ART["model"]
+        FEATURES = ART["features"]
+        print(f"[startup] Model loaded from S3 into memory (features={len(FEATURES)})")
+    except Exception as e:
+        ART = MODEL = FEATURES = None
+        print(f"[startup] not_ready: {e}")
+
+@app.get("/health")
+def health():
+    ok = MODEL is not None and FEATURES is not None
+    return {
+        "status": "ok" if ok else "not_ready",
+        "source": "s3_in_memory",
+        "bucket": os.getenv("S3_BUCKET"),
+        "key": os.getenv("S3_MODEL_KEY"),
+        "feature_count": (len(FEATURES) if FEATURES else 0),
+    }
+
+@app.post("/admin/reload", include_in_schema=False)
+def admin_reload(secret: str | None = None):
+    if os.getenv("RELOAD_TOKEN") and secret != os.getenv("RELOAD_TOKEN"):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return _reload_from_s3()
+
+def _reload_from_s3():
+    global ART, MODEL, FEATURES
+    ART = _load_artifact_from_s3_into_memory()
+    MODEL = ART["model"]
+    FEATURES = ART["features"]
+    return {"status": "ok", "features": len(FEATURES)}
 
 @app.post("/predict")
 def predict(p: BankPayload):
     if MODEL is None or FEATURES is None:
-        raise HTTPException(status_code=503, detail="Model not loaded. Train first and restart API.")
-    # Build a dict from the Pydantic model fields (flat payload)
+        raise HTTPException(status_code=503, detail="Model not loaded from S3.")
     incoming = {f: getattr(p, f, None) for f in FEATURES}
     X = _coerce_row_to_features(incoming)
-    try:
-        proba = MODEL.predict_proba(X)[0][1]
-        pred = int(proba >= 0.5)
-        return {"prediction": pred, "proba": float(proba)}
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Prediction failed: {type(e).__name__}: {e}")
+    proba = float(MODEL.predict_proba(X)[0][1])
+    return {"prediction": int(proba >= 0.5), "proba": proba}

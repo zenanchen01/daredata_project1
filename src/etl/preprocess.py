@@ -3,6 +3,7 @@ import io
 import pandas as pd
 import boto3
 from sqlalchemy import create_engine, text
+from common.db import get_engine
 
 # Env vars set in .env
 BUCKET       = os.environ["S3_BUCKET"]
@@ -36,7 +37,7 @@ def log_dataset_version(bucket: str, key: str, row_count: int):
     head = s3.head_object(Bucket=bucket, Key=key)
     etag = head.get("ETag", "").strip('"')
 
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    ENGINE = get_engine()
     with engine.begin() as conn:
         conn.execute(
             text("INSERT INTO dataset_versions (s3_key, etag, row_count) VALUES (:k,:e,:r)"),

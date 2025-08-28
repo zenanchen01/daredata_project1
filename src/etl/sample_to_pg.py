@@ -1,11 +1,12 @@
 # src/etl/sample_to_pg.py
 import os, io, pandas as pd, boto3
 from sqlalchemy import create_engine, text
+from common.db import get_engine
 
 BUCKET=os.environ["S3_BUCKET"]
 KEY=os.environ["S3_CURATED_KEY"]
 REGION=os.getenv("AWS_DEFAULT_REGION","eu-west-1")
-ENGINE = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+ENGINE = get_engine()
 
 s3=boto3.client("s3", region_name=REGION)
 obj=s3.get_object(Bucket=BUCKET, Key=KEY)

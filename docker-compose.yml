@@ -17,9 +17,10 @@ services:
       dockerfile: src/api/Dockerfile
     env_file: [ .env]
     environment:
-      DATABASE_URL: postgresql://user:pass@db:5432/ml_db
       MODEL_PATH: /app/artifacts/model.joblib
       PYTHONPATH: /app
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      RDS_SECRET_ARN: ${RDS_SECRET_ARN}
     depends_on:
       - db
     ports:

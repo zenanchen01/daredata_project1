@@ -1,9 +1,10 @@
 import sys
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import 
+from common.db import get_engine
 
 CSV = sys.argv[1] if len(sys.argv) > 1 else "data/bank.csv"
-ENGINE = create_engine("postgresql+psycopg2://user:pass@db:5432/ml_db")
+ENGINE = get_engine()
 
 # Read CSV (UCI’s bank-full/bank.csv style)
 df = pd.read_csv(CSV, sep=";", na_values=["unknown"])

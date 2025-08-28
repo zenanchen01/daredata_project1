@@ -5,6 +5,7 @@ from botocore.exceptions import ClientError, BotoCoreError
 from datetime import datetime
 from sqlalchemy import create_engine, text, bindparam
 from sqlalchemy.dialects.postgresql import JSONB
+from common.db import get_engine
 
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
@@ -99,7 +100,7 @@ def main():
     s3_copy_object(BUCKET, unique_key, MODEL_KEY)
 
     # --- Log version to Postgres ---
-    ENGINE = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+    ENGINE = get_engine()
     s3 = boto3.client("s3", region_name=REGION)
     head = s3.head_object(Bucket=BUCKET, Key=unique_key)
     etag = head.get("ETag", "").strip('"')

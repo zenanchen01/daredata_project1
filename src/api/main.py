@@ -5,6 +5,7 @@ import boto3
 from botocore.exceptions import ClientError, BotoCoreError
 from sqlalchemy import create_engine, text, bindparam
 from sqlalchemy.dialects.postgresql import JSONB
+from common.db import get_engine
 
 app = FastAPI(title="Bank Marketing API (S3 in-memory)")
 
@@ -14,7 +15,7 @@ FEATURES = None
 
 NUMERIC_COLS = {"age", "balance", "day", "campaign", "pdays", "previous"}
 
-ENGINE = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+ENGINE = get_engine()
 
 class BankPayload(BaseModel):
     age: int | None = Field(default=None)
@@ -132,3 +133,8 @@ def predict(p: BankPayload):
     pred = int(proba >= 0.5)
     log_prediction(incoming, pred, proba)
     return {"prediction": pred, "proba": proba}
+
+@app.on_event("shutdown")
+def _shutdown():
+    eng = get_engine()
+    eng.dispose()

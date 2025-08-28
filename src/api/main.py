@@ -3,6 +3,8 @@ from pydantic import BaseModel, Field
 import os, io, joblib, pandas as pd
 import boto3
 from botocore.exceptions import ClientError, BotoCoreError
+from sqlalchemy import create_engine, text, bindparam
+from sqlalchemy.dialects.postgresql import JSONB
 
 app = FastAPI(title="Bank Marketing API (S3 in-memory)")
 
@@ -11,6 +13,8 @@ ART = MODEL = None
 FEATURES = None
 
 NUMERIC_COLS = {"age", "balance", "day", "campaign", "pdays", "previous"}
+
+ENGINE = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
 
 class BankPayload(BaseModel):
     age: int | None = Field(default=None)
@@ -63,6 +67,23 @@ def _coerce_row_to_features(row_in: dict) -> pd.DataFrame:
         row[f] = v
     return pd.DataFrame([row], columns=FEATURES)
 
+
+def log_prediction(req: dict, pred: int, proba: float):
+    try:
+        ds = ART.get("dataset_meta", {}) if ART else {}
+        stmt = text("""
+            INSERT INTO prediction_logs (request_json, prediction, proba, model_s3_key, model_etag, dataset_etag, dataset_key)
+            VALUES (:req, :pred, :proba, :mkey, :metag, :detag, :dkey)
+        """).bindparams(bindparam("req", type_=JSONB))
+        with ENGINE.begin() as conn:
+            conn.execute(stmt, {
+            "req": req, "pred": pred, "proba": proba,
+            "mkey": os.getenv("S3_MODEL_KEY"), "metag": os.getenv("MODEL_ETAG",""),
+            "detag": ds.get("etag"), "dkey": ds.get("s3_key")
+            })
+    except Exception as e:
+        print(f"[warn] prediction log failed: {e}")
+
 @app.on_event("startup")
 def _startup():
     global ART, MODEL, FEATURES
@@ -77,13 +98,15 @@ def _startup():
 
 @app.get("/health")
 def health():
-    ok = MODEL is not None and FEATURES is not None
+    ds = ART.get("dataset_meta", {}) if ART else {}
     return {
-        "status": "ok" if ok else "not_ready",
-        "source": "s3_in_memory",
-        "bucket": os.getenv("S3_BUCKET"),
-        "key": os.getenv("S3_MODEL_KEY"),
-        "feature_count": (len(FEATURES) if FEATURES else 0),
+        "status": "ok" if MODEL else "not_ready",
+        "feature_count": len(ART.get("features", [])) if ART else 0,
+        "dataset": {
+            "s3_key": ds.get("s3_key"),
+            "etag": ds.get("etag"),
+            "row_count": ds.get("row_count"),
+        },
     }
 
 @app.post("/admin/reload", include_in_schema=False)
@@ -106,4 +129,6 @@ def predict(p: BankPayload):
     incoming = {f: getattr(p, f, None) for f in FEATURES}
     X = _coerce_row_to_features(incoming)
     proba = float(MODEL.predict_proba(X)[0][1])
-    return {"prediction": int(proba >= 0.5), "proba": proba}
+    pred = int(proba >= 0.5)
+    log_prediction(incoming, pred, proba)
+    return {"prediction": pred, "proba": proba}

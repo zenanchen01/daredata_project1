@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS model_versions (
   id SERIAL PRIMARY KEY,
   s3_key      TEXT NOT NULL,
   etag        TEXT,
+  dataset_etag TEXT,
+  dataset_key  TEXT,
   metrics     JSONB,        -- e.g. {"auc":0.91,"f1":0.52}
   created_at  TIMESTAMPTZ DEFAULT now()
 );
@@ -46,6 +48,8 @@ CREATE TABLE IF NOT EXISTS prediction_logs (
   request_json JSONB NOT NULL,
   prediction INT NOT NULL,
   proba DOUBLE PRECISION NOT NULL,
+    dataset_etag TEXT,
+  dataset_key  TEXT,
   model_s3_key TEXT,
   model_etag TEXT
 );

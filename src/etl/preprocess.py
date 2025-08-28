@@ -10,7 +10,7 @@ BUCKET       = os.environ["S3_BUCKET"]
 RAW_KEY      = os.environ["S3_DATA_KEY"]       # e.g. datasets/bank.csv
 CURATED_KEY  = os.environ["S3_CURATED_KEY"]    # e.g. curated/bank_clean.csv
 REGION       = os.getenv("AWS_DEFAULT_REGION", "eu-west-1")
-DATABASE_URL = os.environ["DATABASE_URL"]
+ENGINE = get_engine()
 
 def read_csv_s3(bucket: str, key: str) -> pd.DataFrame:
     """Read CSV file directly from S3 into Pandas."""
@@ -38,7 +38,7 @@ def log_dataset_version(bucket: str, key: str, row_count: int):
     etag = head.get("ETag", "").strip('"')
 
     ENGINE = get_engine()
-    with engine.begin() as conn:
+    with ENGINE.begin() as conn:
         conn.execute(
             text("INSERT INTO dataset_versions (s3_key, etag, row_count) VALUES (:k,:e,:r)"),
             {"k": key, "e": etag, "r": int(row_count)}
